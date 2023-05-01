@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.33530.505
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KicWeb", "KicWeb\KicWeb.csproj", "{A1B7052B-935C-4579-8B8F-8D47DFBB398E}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A1B7052B-935C-4579-8B8F-8D47DFBB398E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1B7052B-935C-4579-8B8F-8D47DFBB398E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B7052B-935C-4579-8B8F-8D47DFBB398E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1B7052B-935C-4579-8B8F-8D47DFBB398E}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {6046B642-10CA-4605-B29D-CB435F967CAD}
+	EndGlobalSection
+EndGlobal
