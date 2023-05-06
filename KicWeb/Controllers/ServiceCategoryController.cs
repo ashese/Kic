@@ -1,4 +1,4 @@
-﻿using KicWeb.Data;
+﻿using KicWeb.DAL;
 using KicWeb.Models;
 using Microsoft.AspNetCore.Mvc;
 
@@ -6,15 +6,14 @@ namespace KicWeb.Controllers
 {
     public class ServiceCategoryController : Controller
     {
-        private readonly ApplicationDbContext _db;
-        public ServiceCategoryController(ApplicationDbContext db)
+        private readonly IUnitOfWork _unitOfWork;
+        public ServiceCategoryController(IUnitOfWork unitOfWork)
         {
-            _db = db;
+            _unitOfWork = unitOfWork;
         }
         public IActionResult Index()
         {
-            IEnumerable<ServiceCategory> categoryList = _db.ServiceCategories;
-            return View(categoryList);
+            return View(_unitOfWork.ServiceCategoryRepository.GetServiceCategories());
         }
         //GET
         public IActionResult Create()
@@ -32,9 +31,9 @@ namespace KicWeb.Controllers
             }
             if (serviceCategory != null && ModelState.IsValid)
             {
-                _db.ServiceCategories.Add(serviceCategory);
-                _db.SaveChanges();
-                TempData["Success"] = "Service Category created successfully!";                
+                _unitOfWork.ServiceCategoryRepository.AddServiceCategory(serviceCategory);
+                _unitOfWork.Commit();
+                TempData["Success"] = "Service Category created successfully!";
                 return RedirectToAction("Index");
             }
             return View(serviceCategory);
@@ -47,7 +46,7 @@ namespace KicWeb.Controllers
             {
                 return NotFound();
             }
-            var serviceFromDb = _db.ServiceCategories.Find(id);
+            var serviceFromDb = _unitOfWork.ServiceCategoryRepository.GetServiceCategoryById(id);
 
             if (serviceFromDb == null)
             {
@@ -66,8 +65,8 @@ namespace KicWeb.Controllers
             }
             if (serviceCategory != null && ModelState.IsValid)
             {
-                _db.ServiceCategories.Update(serviceCategory);
-                _db.SaveChanges();
+                _unitOfWork.ServiceCategoryRepository.UpdateServiceCategory(serviceCategory);
+                _unitOfWork.Commit();
                 TempData["Success"] = "Service Category updated successfully!";
                 return RedirectToAction("Index");
             }
@@ -81,7 +80,7 @@ namespace KicWeb.Controllers
             {
                 return NotFound();
             }
-            var serviceFromDb = _db.ServiceCategories.Find(id);
+            var serviceFromDb = _unitOfWork.ServiceCategoryRepository.GetServiceCategoryById(id);
 
             if (serviceFromDb == null)
             {
@@ -98,15 +97,24 @@ namespace KicWeb.Controllers
             {
                 return NotFound();
             }
-            var serviceFromDb = _db.ServiceCategories.Find(id);
+            var serviceFromDb = _unitOfWork.ServiceCategoryRepository.GetServiceCategoryById(id);
+            _unitOfWork.Commit();
             if (serviceFromDb == null)
             {
                 return NotFound();
             }
-            _db.ServiceCategories.Remove(serviceFromDb);
+            _unitOfWork.ServiceCategoryRepository.RemoveServiceCategory(serviceFromDb);
             TempData["Success"] = "Service Category deleted successfully!";
-            _db.SaveChanges();
             return RedirectToAction("Index");
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _unitOfWork.ServiceCategoryRepository.Dispose();
+            }
+            base.Dispose(disposing);
         }
     }
 }
