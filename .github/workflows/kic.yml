@@ -19,13 +19,19 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
-    - name: Setup .NET
+    - name: Setup .NET Core
       uses: actions/setup-dotnet@v3
       with:
-        dotnet-version: 6.0.x
+        dotnet-version: '6.0.x'
+        
     - name: Restore dependencies
-      run: dotnet restore
-    - name: Build
-      run: dotnet build --no-restore
-    - name: Test
+      run: dotnet restore ./KicWeb.sln
+      
+    - name: Build solution
+      run: dotnet build ./KicWeb.sln --configuration Release --no-restore
+      
+    - name: Run Tests
       run: dotnet test --no-build --verbosity normal
+      
+    - name: Publish
+      run: dotnet publish ./KicWeb.sln --configuration Release --no-build
