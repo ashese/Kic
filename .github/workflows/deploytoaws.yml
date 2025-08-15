@@ -1,4 +1,4 @@
-name: Deploy to AWS EC2 (Windows Server)
+name: DeploytoAWSEC2(Windows Server)
 
 on:
   workflow_dispatch:
@@ -9,7 +9,6 @@ env:
   CURRENT_DIR: C:\inetpub\myapp\current
   MAINTENANCE_FILE: appdown.htm.txt
   MAINTENANCE_FILE_DISABLED: appdown.htm.txt.disabled
-  #UNICORN_SYNC_URL: "https://yoursite.com/unicorn.aspx?verb=sync&secret=YOUR_SECRET"
   APPPOOL_NAME: "MyAppPool"
   EC2_HOST: ec2-18-224-181-204.us-east-2.compute.amazonaws.com
   
@@ -18,29 +17,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. Checkout
     - name: Checkout code
       uses: actions/checkout@v4
       
-    # 4. Setup .NET for Sitecore build
     - name: Setup .NET
       uses: actions/setup-dotnet@v4.0.0
       with:
-        dotnet-version: '6.0.x' # Adjust if using older .NET Framework
+        dotnet-version: '6.0.x'
           
-    # 3. Build & package as ZIP
     - name: Build and package
       run: |
         mkdir out
         dotnet publish ./KicWeb/KicWeb.csproj -c Release -o out
         zip -r package.zip out/*
 
-    # 4. Upload package to EC2
     - name: Upload package to EC2
       run: |
         scp -o StrictHostKeyChecking=no -i key.pem package.zip Administrator@${{ env.EC2_HOST }}:/C:/temp/package.zip
 
-    # 5. Deploy with rollback logic on Windows Server
     - name: Deploy on Windows EC2 with Rollback (ZIP-based)
       run: |
         ssh -o StrictHostKeyChecking=no -i key.pem Administrator@${{ env.EC2_HOST }} powershell -Command "
