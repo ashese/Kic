@@ -37,7 +37,7 @@ jobs:
       - name: Create WinRM HTTPS credential
         id: winrm-creds
         run: |
-          $password = "${{ secrets.EC2_WINRM_PASSWORD }}"
+          $password = "${{ env.EC2_WINRM_PASSWORD }}"
           $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
           $credential = New-Object System.Management.Automation.PSCredential ("${{ env.WINRM_USER }}", $securePassword)
           $credentialJson = $credential | ConvertTo-Json -Compress
