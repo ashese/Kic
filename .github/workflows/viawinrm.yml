@@ -1,0 +1,173 @@
+name: Deploy to AWS EC2 (Windows Server) via WinRM
+on:
+  workflow_dispatch:
+
+env:
+  DEPLOY_BASE: C:\inetpub\myapp
+  RELEASES_DIR: C:\inetpub\myapp\releases
+  CURRENT_DIR: C:\inetpub\myapp\current
+  MAINTENANCE_FILE: appdown.htm.txt
+  MAINTENANCE_FILE_DISABLED: appdown.htm.txt.disabled
+  APPPOOL_NAME: "MyAppPool"
+  EC2_HOST: ec2-18-224-181-204.us-east-2.compute.amazonaws.com
+  WINRM_USER: Administrator
+  EC2_WINRM_PASSWORD: Zb?.SHJB@2DYOP)%A3e@3Rd2a3gdpiBF
+  WINRM_PORT: 5986  # Default HTTPS WinRM port
+
+jobs:
+  run_on_develop:
+    runs-on: windows-latest  # Changed to Windows runner for better WinRM compatibility
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.targetBranch }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4.0.0
+        with:
+          dotnet-version: '6.0.x'
+
+      - name: Build and package
+        run: |
+          mkdir out
+          dotnet publish ./KicWeb/KicWeb.csproj -c Release -o out
+          Compress-Archive -Path ./out/* -DestinationPath ./package.zip -Force
+
+      - name: Create WinRM HTTPS credential
+        id: winrm-creds
+        run: |
+          $password = "${{ env.EC2_WINRM_PASSWORD }}"
+          $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
+          $credential = New-Object System.Management.Automation.PSCredential ("${{ env.WINRM_USER }}", $securePassword)
+          $credentialJson = $credential | ConvertTo-Json -Compress
+          echo "credentialJson=$credentialJson" >> $env:GITHUB_OUTPUT
+
+      - name: Upload and deploy package via WinRM
+        run: |
+          $credential = ${{ steps.winrm-creds.outputs.credentialJson }} | ConvertFrom-Json
+          $sessionOptions = New-PSSessionOption -SkipCACheck -SkipCNCheck -SkipRevocationCheck
+          
+          $remoteScript = {
+            param($envVars)
+            
+            try {
+              $ErrorActionPreference = 'Stop'
+              $timestamp = Get-Date -Format yyyyMMddHHmmss
+              $releasesDir = $envVars.RELEASES_DIR
+              $currentDir = $envVars.CURRENT_DIR
+              $newRelease = "$releasesDir\$timestamp"
+              $backupDir = "$releasesDir\backup_$timestamp"
+              $pool = $envVars.APPPOOL_NAME
+
+              Write-Host 'Creating release folder...'
+              New-Item -ItemType Directory -Force -Path $newRelease | Out-Null
+
+              Write-Host 'Extracting package...'
+              Expand-Archive -Path C:\temp\package.zip -DestinationPath $newRelease -Force
+              Remove-Item C:\temp\package.zip -Force
+
+              Write-Host 'Enable maintenance page in new release (if present)...'
+              if (Test-Path "$newRelease\$($envVars.MAINTENANCE_FILE_DISABLED)") {
+                Rename-Item "$newRelease\$($envVars.MAINTENANCE_FILE_DISABLED)" "$newRelease\$($envVars.MAINTENANCE_FILE)"
+              }
+
+              Write-Host 'Backup current site...'
+              if (Test-Path $currentDir) {
+                Copy-Item $currentDir $backupDir -Recurse -Force
+              }
+
+              Write-Host 'Deploy new release to current...'
+              if (Test-Path $currentDir) { Remove-Item $currentDir -Recurse -Force }
+              Copy-Item $newRelease $currentDir -Recurse
+
+              Write-Host 'Recycle App Pool...'
+              $recycled = $false
+              try {
+                Import-Module WebAdministration -ErrorAction Stop
+                if (Get-WebAppPoolState -Name $pool) {
+                  Stop-WebAppPool -Name $pool
+                  Start-WebAppPool -Name $pool
+                  $recycled = $true
+                }
+              } catch { }
+
+              if (-not $recycled) {
+                Write-Host 'Trying appcmd...'
+                if (Test-Path $env:windir\system32\inetsrv\appcmd.exe) {
+                  & $env:windir\system32\inetsrv\appcmd.exe recycle apppool /apppool.name:"$pool" | Out-Host
+                  $recycled = $true
+                }
+              }
+
+              if (-not $recycled) {
+                Write-Host 'Falling back to IISRESET...'
+                iisreset /noforce
+              }
+
+              Write-Host 'Disable maintenance page...'
+              if (Test-Path "$currentDir\$($envVars.MAINTENANCE_FILE)") {
+                Rename-Item "$currentDir\$($envVars.MAINTENANCE_FILE)" "$currentDir\$($envVars.MAINTENANCE_FILE_DISABLED)"
+              }
+
+              Write-Host 'Clean old releases (keep 5 newest; backups preserved)...'
+              Get-ChildItem $releasesDir | Where-Object { $_.Name -notlike 'backup_*' } |
+                Sort-Object CreationTime -Descending | Select-Object -Skip 5 | Remove-Item -Recurse -Force
+
+              Write-Host 'Deployment successful.'
+            }
+            catch {
+              Write-Warning ('Deployment failed: ' + $_)
+              Write-Host 'Rolling back...'
+              if (Test-Path "$backupDir") {
+                if (Test-Path $currentDir) { Remove-Item $currentDir -Recurse -Force }
+                Copy-Item $backupDir $currentDir -Recurse
+                try {
+                  Import-Module WebAdministration -ErrorAction Stop
+                  Stop-WebAppPool -Name $pool
+                  Start-WebAppPool -Name $pool
+                } catch {
+                  if (Test-Path $env:windir\system32\inetsrv\appcmd.exe) {
+                    & $env:windir\system32\inetsrv\appcmd.exe recycle apppool /apppool.name:"$pool" | Out-Host
+                  } else {
+                    iisreset /noforce
+                  }
+                }
+                Write-Host 'Rollback completed.'
+              } else {
+                Write-Warning 'No backup found; rollback skipped.'
+              }
+              exit 1
+            }
+          }
+
+          try {
+            # Create session
+            $session = New-PSSession -ComputerName $env:EC2_HOST -Port $env:WINRM_PORT `
+                      -Credential $credential -UseSSL -SessionOption $sessionOptions
+
+            # Copy package to remote server
+            Write-Host "Uploading package to remote server..."
+            Copy-Item -Path ./package.zip -Destination "C:\temp\package.zip" -ToSession $session -Force
+
+            # Execute deployment script
+            Write-Host "Starting deployment..."
+            Invoke-Command -Session $session -ScriptBlock $remoteScript -ArgumentList @{
+                RELEASES_DIR = $env:RELEASES_DIR
+                CURRENT_DIR = $env:CURRENT_DIR
+                MAINTENANCE_FILE = $env:MAINTENANCE_FILE
+                MAINTENANCE_FILE_DISABLED = $env:MAINTENANCE_FILE_DISABLED
+                APPPOOL_NAME = $env:APPPOOL_NAME
+            }
+
+            Write-Host "Deployment completed successfully."
+          }
+          catch {
+            Write-Host "Deployment failed: $_"
+            exit 1
+          }
+          finally {
+            if ($session) {
+                Remove-PSSession $session -ErrorAction SilentlyContinue
+            }
+          }
