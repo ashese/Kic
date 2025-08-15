@@ -27,9 +27,16 @@ jobs:
           mkdir out
           dotnet publish ./KicWeb/KicWeb.csproj -c Release -o out
           zip -r package.zip out/*
+          
+      - name: Prepare SSH Key for Windows EC2
+        run: |
+            echo "${{ secrets.EC2_SSH_KEY }}" > key.pem
+            chmod 600 key.pem
+            
       - name: Upload package to EC2
         run: |
           scp -o StrictHostKeyChecking=no -i key.pem package.zip Administrator@${{ env.EC2_HOST }}:/C:/temp/package.zip
+      
       - name: Deploy on Windows EC2 with Rollback (ZIP-based)
         run: |-
           ssh -o StrictHostKeyChecking=no -i key.pem Administrator@${{ env.EC2_HOST }} powershell -Command "
