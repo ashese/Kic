@@ -39,7 +39,7 @@ jobs:
         run: |
           $password = "${{ env.EC2_WINRM_PASSWORD }}"
           $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
-          $credential = New-Object System.Management.Automation.PSCredential ("${{ env.WINRM_USER }}", $securePassword)
+          $credential = New-Object System.Management.Automation.PSCredential ("Administrator", $securePassword)
           $credentialJson = $credential | ConvertTo-Json -Compress
           echo "credentialJson=$credentialJson" >> $env:GITHUB_OUTPUT
 
