@@ -1,0 +1,133 @@
+name: Deploy to AWS EC2 (Windows Server)
+
+on:
+  workflow_dispatch:
+
+env:
+  DEPLOY_BASE: C:\inetpub\myapp
+  RELEASES_DIR: C:\inetpub\myapp\releases
+  CURRENT_DIR: C:\inetpub\myapp\current
+  MAINTENANCE_FILE: appdown.htm.txt
+  MAINTENANCE_FILE_DISABLED: appdown.htm.txt.disabled
+  #UNICORN_SYNC_URL: "https://yoursite.com/unicorn.aspx?verb=sync&secret=YOUR_SECRET"
+  APPPOOL_NAME: "MyAppPool"
+  EC2_HOST: ec2-18-224-181-204.us-east-2.compute.amazonaws.com
+  
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. Checkout
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # 3. Build & package as ZIP
+    - name: Build and package
+      run: |
+        mkdir out
+        dotnet publish ./KicWeb/KicWeb.csproj -c Release -o out
+        zip -r package.zip out/*
+
+    # 4. Upload package to EC2
+    - name: Upload package to EC2
+      run: |
+        scp -o StrictHostKeyChecking=no -i key.pem package.zip Administrator@${{ env.EC2_HOST }}:/C:/temp/package.zip
+
+    # 5. Deploy with rollback logic on Windows Server
+    - name: Deploy on Windows EC2 with Rollback (ZIP-based)
+      run: |
+        ssh -o StrictHostKeyChecking=no -i key.pem Administrator@${{ env.EC2_HOST }} powershell -Command "
+          try {
+            \$ErrorActionPreference = 'Stop'
+            \$timestamp   = Get-Date -Format yyyyMMddHHmmss
+            \$releasesDir = '${{ env.RELEASES_DIR }}'
+            \$currentDir  = '${{ env.CURRENT_DIR }}'
+            \$newRelease  = \"\$releasesDir\\\$timestamp\"
+            \$backupDir   = \"\$releasesDir\\backup_\$timestamp\"
+            \$pool        = '${{ env.APPPOOL_NAME }}'
+
+            Write-Host 'Creating release folder...'
+            New-Item -ItemType Directory -Force -Path \$newRelease | Out-Null
+
+            Write-Host 'Extracting package...'
+            Expand-Archive -Path C:\\temp\\package.zip -DestinationPath \$newRelease -Force
+            Remove-Item C:\\temp\\package.zip -Force
+
+            Write-Host 'Enable maintenance page in new release (if present)...'
+            if (Test-Path \"\$newRelease\\${{ env.MAINTENANCE_FILE_DISABLED }}\") {
+              Rename-Item \"\$newRelease\\${{ env.MAINTENANCE_FILE_DISABLED }}\" \"\$newRelease\\${{ env.MAINTENANCE_FILE }}\"
+            }
+
+            Write-Host 'Backup current site...'
+            if (Test-Path \$currentDir) {
+              Copy-Item \$currentDir \$backupDir -Recurse -Force
+            }
+
+            Write-Host 'Deploy new release to current...'
+            if (Test-Path \$currentDir) { Remove-Item \$currentDir -Recurse -Force }
+            Copy-Item \$newRelease \$currentDir -Recurse
+
+            Write-Host 'Recycle App Pool...'
+            \$recycled = \$false
+            try {
+              Import-Module WebAdministration -ErrorAction Stop
+              if (Get-WebAppPoolState -Name \$pool) {
+                Stop-WebAppPool -Name \$pool
+                Start-WebAppPool -Name \$pool
+                \$recycled = \$true
+              }
+            } catch { }
+
+            if (-not \$recycled) {
+              Write-Host 'Trying appcmd...'
+              if (Test-Path \$env:windir\\system32\\inetsrv\\appcmd.exe) {
+                & \$env:windir\\system32\\inetsrv\\appcmd.exe recycle apppool /apppool.name:\"\$pool\" | Out-Host
+                \$recycled = \$true
+              }
+            }
+
+            if (-not \$recycled) {
+              Write-Host 'Falling back to IISRESET...'
+              iisreset /noforce
+            }
+
+            Write-Host 'Disable maintenance page...'
+            if (Test-Path \"\$currentDir\\${{ env.MAINTENANCE_FILE }}\") {
+              Rename-Item \"\$currentDir\\${{ env.MAINTENANCE_FILE }}\" \"\$currentDir\\${{ env.MAINTENANCE_FILE_DISABLED }}\"
+            }
+
+            <#Write-Host 'Run Unicorn sync...'
+            \$sync = Invoke-WebRequest -Uri '${{ env.UNICORN_SYNC_URL }}' -UseBasicParsing
+            if (\$sync.StatusCode -ne 200) { throw 'Unicorn sync failed' }#>
+
+            Write-Host 'Clean old releases (keep 5 newest; backups preserved)...'
+            Get-ChildItem \$releasesDir | Where-Object { \$_.Name -notlike 'backup_*' } |
+              Sort-Object CreationTime -Descending | Select-Object -Skip 5 | Remove-Item -Recurse -Force
+
+            Write-Host 'Deployment successful.'
+          }
+          catch {
+            Write-Warning ('Deployment failed: ' + \$_)
+            Write-Host 'Rolling back...'
+            if (Test-Path \"\$backupDir\") {
+              if (Test-Path \$currentDir) { Remove-Item \$currentDir -Recurse -Force }
+              Copy-Item \$backupDir \$currentDir -Recurse
+              try {
+                Import-Module WebAdministration -ErrorAction Stop
+                Stop-WebAppPool -Name '${{ env.APPPOOL_NAME }}'
+                Start-WebAppPool -Name '${{ env.APPPOOL_NAME }}'
+              } catch {
+                if (Test-Path \$env:windir\\system32\\inetsrv\\appcmd.exe) {
+                  & \$env:windir\\system32\\inetsrv\\appcmd.exe recycle apppool /apppool.name:'${{ env.APPPOOL_NAME }}' | Out-Host
+                } else {
+                  iisreset /noforce
+                }
+              }
+              Write-Host 'Rollback completed.'
+            } else {
+              Write-Warning 'No backup found; rollback skipped.'
+            }
+            exit 1
+          }
+        "
