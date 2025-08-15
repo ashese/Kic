@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       targetBranch:
-        description: 'Branch to run the workflow on'
+        description: 'Branch to Master'
         required: true
-        default: 'develop'
+        default: 'master'
 
 env:
   DEPLOY_BASE: C:\inetpub\myapp
@@ -20,11 +20,13 @@ env:
 jobs:
   run_on_develop:
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/develop' # Ensure the workflow only runs if the target branch is 'develop'
+    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
+      with:
+          ref: ${{ github.event.inputs.targetBranch }}
+          
     - name: Setup .NET
       uses: actions/setup-dotnet@v4.0.0
       with:
